@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/cache"
 )
 
 type ThreatCategory string
@@ -32,25 +33,43 @@ type Result struct {
 	Safe           bool
 	ThreatCategory ThreatCategory
 	Degraded       bool
+	CacheHit       bool
 	CheckedAt      time.Time
 	Version        int
 	Err            error
 }
 
 type Service struct {
-	rdb *redis.Client
+	rdb   *redis.Client
+	cache *cache.TTLCache
 }
 
-func New(rdb *redis.Client) *Service {
-	return &Service{rdb: rdb}
+func New(rdb *redis.Client, c *cache.TTLCache) *Service {
+	return &Service{rdb: rdb, cache: c}
 }
 
 func (s *Service) Lookup(ctx context.Context, url string) Result {
 	now := time.Now().UTC()
 
+	// LRU hit — avoid the Redis round-trip on hot URLs.
+	if raw, ok := s.cache.Get(url); ok {
+		var info threatInfo
+		if err := json.Unmarshal([]byte(raw), &info); err == nil {
+			return Result{
+				URL:            url,
+				Safe:           info.Category == ThreatNone,
+				ThreatCategory: info.Category,
+				CacheHit:       true,
+				CheckedAt:      now,
+				Version:        1,
+			}
+		}
+	}
+
 	raw, err := s.rdb.Get(ctx, url).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
+			s.cache.Set(url, `{"threat_category":"none"}`)
 			return Result{
 				URL:            url,
 				Safe:           true,
@@ -70,6 +89,8 @@ func (s *Service) Lookup(ctx context.Context, url string) Result {
 			Err:            err,
 		}
 	}
+
+	s.cache.Set(url, raw)
 
 	var info threatInfo
 	if jsonErr := json.Unmarshal([]byte(raw), &info); jsonErr != nil {
@@ -93,6 +114,8 @@ func (s *Service) AddURLs(ctx context.Context, entries []URLEntry) error {
 			return err
 		}
 		pipe.Set(ctx, e.URL, string(data), 0)
+		// Invalidate stale LRU entries immediately.
+		s.cache.Delete(e.URL)
 	}
 	_, err := pipe.Exec(ctx)
 	return err

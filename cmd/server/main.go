@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/cache"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/handler"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
 )
@@ -38,7 +39,13 @@ func main() {
 	}
 	logger.Info("Redis ready")
 
-	svc := lookup.New(rdb)
+	lruCache, err := cache.New(10_000, 5*time.Minute)
+	if err != nil {
+		logger.Error("failed to create LRU cache", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
+	svc := lookup.New(rdb, lruCache)
 	h := handler.New(svc, logger)
 
 	gin.SetMode(gin.ReleaseMode)

@@ -3,9 +3,11 @@ package lookup_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/cache"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
 )
 
@@ -16,7 +18,11 @@ func newTestService(t *testing.T) (*lookup.Service, *miniredis.Miniredis) {
 		t.Fatal(err)
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return lookup.New(rdb), mr
+	c, err := cache.New(100, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lookup.New(rdb, c), mr
 }
 
 func TestLookupSafeURL(t *testing.T) {
@@ -101,14 +107,48 @@ func TestLookupUnlistedAfterOtherURLsAdded(t *testing.T) {
 	}
 }
 
+func TestLookupCacheHit(t *testing.T) {
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("evil.com/phishing", `{"threat_category":"phishing"}`)
+
+	r1 := svc.Lookup(context.Background(), "evil.com/phishing")
+	if r1.CacheHit {
+		t.Error("first lookup should be a Redis hit, not LRU hit")
+	}
+
+	r2 := svc.Lookup(context.Background(), "evil.com/phishing")
+	if !r2.CacheHit {
+		t.Error("second lookup should be served from LRU cache")
+	}
+	if r2.ThreatCategory != lookup.ThreatPhishing {
+		t.Errorf("cached result wrong: got %s", r2.ThreatCategory)
+	}
+}
+
+func TestLookupNegativeCached(t *testing.T) {
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	r1 := svc.Lookup(context.Background(), "safe.com/page")
+	if r1.CacheHit {
+		t.Error("first lookup should miss cache")
+	}
+
+	r2 := svc.Lookup(context.Background(), "safe.com/page")
+	if !r2.CacheHit {
+		t.Error("negative answer should be served from LRU on second lookup")
+	}
+}
+
 func TestAddURLs(t *testing.T) {
 	svc, mr := newTestService(t)
 	defer mr.Close()
 
-	entries := []lookup.URLEntry{
+	if err := svc.AddURLs(context.Background(), []lookup.URLEntry{
 		{URL: "new-evil.com/path", Category: lookup.ThreatSpam},
-	}
-	if err := svc.AddURLs(context.Background(), entries); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,33 +161,22 @@ func TestAddURLs(t *testing.T) {
 	}
 }
 
-func TestAddURLsBulk(t *testing.T) {
+func TestAddURLsInvalidatesCache(t *testing.T) {
 	svc, mr := newTestService(t)
 	defer mr.Close()
 
-	err := svc.AddURLs(context.Background(), []lookup.URLEntry{
-		{URL: "a.com/1", Category: lookup.ThreatMalware},
-		{URL: "b.com/2", Category: lookup.ThreatPhishing},
-		{URL: "c.com/3", Category: lookup.ThreatSpam},
-	})
-	if err != nil {
+	// Warm the negative cache entry.
+	svc.Lookup(context.Background(), "url.com/path")
+
+	if err := svc.AddURLs(context.Background(), []lookup.URLEntry{
+		{URL: "url.com/path", Category: lookup.ThreatMalware},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	cases := []struct {
-		url  string
-		want lookup.ThreatCategory
-	}{
-		{"a.com/1", lookup.ThreatMalware},
-		{"b.com/2", lookup.ThreatPhishing},
-		{"c.com/3", lookup.ThreatSpam},
-		{"safe.com", lookup.ThreatNone},
-	}
-	for _, tc := range cases {
-		r := svc.Lookup(context.Background(), tc.url)
-		if r.ThreatCategory != tc.want {
-			t.Errorf("url=%s: expected %s, got %s", tc.url, tc.want, r.ThreatCategory)
-		}
+	r := svc.Lookup(context.Background(), "url.com/path")
+	if r.Safe {
+		t.Error("expected URL to be blocked after cache invalidation")
 	}
 }
 
@@ -161,5 +190,27 @@ func TestDegradedMode(t *testing.T) {
 	}
 	if !r.Degraded {
 		t.Error("expected degraded=true when Redis is unreachable")
+	}
+}
+
+func TestDegradedCacheServesPriorHit(t *testing.T) {
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("evil.com/path", `{"threat_category":"malware"}`)
+
+	// Warm the LRU cache while Redis is up.
+	svc.Lookup(context.Background(), "evil.com/path")
+
+	// Kill Redis.
+	mr.Close()
+
+	// Next lookup hits LRU — should not be degraded.
+	r := svc.Lookup(context.Background(), "evil.com/path")
+	if r.Degraded {
+		t.Error("expected cached result to be served without degraded flag")
+	}
+	if r.ThreatCategory != lookup.ThreatMalware {
+		t.Errorf("expected malware from LRU, got %s", r.ThreatCategory)
 	}
 }
