@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/metrics"
 )
 
 type lookupResponse struct {
@@ -18,6 +19,8 @@ type lookupResponse struct {
 }
 
 func (h *Handler) LookupURL(c *gin.Context) {
+	start := time.Now()
+
 	hostnamePort := c.Param("hostname_port")
 	pathParam := c.Param("path")
 
@@ -35,9 +38,30 @@ func (h *Handler) LookupURL(c *gin.Context) {
 
 	result := h.svc.Lookup(c.Request.Context(), targetURL)
 
+	elapsed := time.Since(start)
+	metrics.RequestsTotal.Inc()
+	metrics.RequestDuration.Observe(elapsed.Seconds())
+	if result.CacheHit {
+		metrics.CacheHits.Inc()
+	} else {
+		metrics.CacheMisses.Inc()
+	}
+	if result.Degraded {
+		metrics.ErrorsTotal.Inc()
+	}
+
+	errStr := ""
+	if result.Err != nil {
+		errStr = result.Err.Error()
+	}
+
 	h.logger.Info("url lookup",
 		slog.String("url", targetURL),
 		slog.Bool("safe", result.Safe),
+		slog.Bool("cache_hit", result.CacheHit),
+		slog.Float64("latency_ms", float64(elapsed.Microseconds())/1000.0),
+		slog.Bool("degraded", result.Degraded),
+		slog.String("error", errStr),
 	)
 
 	c.JSON(http.StatusOK, lookupResponse{

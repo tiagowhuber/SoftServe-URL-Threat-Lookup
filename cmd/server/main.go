@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/cache"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/handler"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/metrics"
 )
 
 func main() {
@@ -45,6 +47,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	metrics.Register()
+
 	svc := lookup.New(rdb, lruCache)
 	h := handler.New(svc, logger)
 
@@ -55,6 +59,7 @@ func main() {
 	router.GET("/urlinfo/1/:hostname_port/*path", h.LookupURL)
 	router.POST("/admin/urls", h.AddURLs)
 	router.GET("/health", h.Health)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	logger.Info("server listening", slog.String("addr", ":8080"))
 	if err := router.Run(":8080"); err != nil && err != http.ErrServerClosed {
