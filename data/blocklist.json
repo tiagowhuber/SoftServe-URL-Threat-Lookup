@@ -1,0 +1,8 @@
+[
+  {"url": "malware.example.com/download/virus.exe",          "threat_category": "malware"},
+  {"url": "ransomware.evil.com:443/encrypt/files",           "threat_category": "malware"},
+  {"url": "phishing.example.com/login/steal-credentials",    "threat_category": "phishing"},
+  {"url": "fake-bank.phish.net/account/verify",              "threat_category": "phishing"},
+  {"url": "spam.example.com/buy-now/cheap-pills",            "threat_category": "spam"},
+  {"url": "click.spam-king.com/unsubscribe/lol",             "threat_category": "spam"}
+]

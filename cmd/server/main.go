@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,6 +51,11 @@ func main() {
 	metrics.Register()
 
 	svc := lookup.New(rdb, lruCache)
+
+	if err := loadSeedData(ctx, svc, logger); err != nil {
+		logger.Error("failed to load seed data", slog.String("error", err.Error()))
+	}
+
 	h := handler.New(svc, logger)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -66,4 +72,27 @@ func main() {
 		logger.Error("server error", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+}
+
+func loadSeedData(ctx context.Context, svc *lookup.Service, logger *slog.Logger) error {
+	data, err := os.ReadFile("data/blocklist.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Info("no seed file found, skipping")
+			return nil
+		}
+		return err
+	}
+
+	var entries []lookup.URLEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+
+	if err := svc.AddURLs(ctx, entries); err != nil {
+		return err
+	}
+
+	logger.Info("seed data loaded", slog.Int("count", len(entries)))
+	return nil
 }
