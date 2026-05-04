@@ -4,11 +4,24 @@ import (
 	"context"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
 )
 
+func newTestService(t *testing.T) (*lookup.Service, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	return lookup.New(rdb), mr
+}
+
 func TestLookupSafeURL(t *testing.T) {
-	svc := lookup.New()
+	svc, mr := newTestService(t)
+	defer mr.Close()
 
 	r := svc.Lookup(context.Background(), "safe.com/page")
 	if !r.Safe {
@@ -26,13 +39,16 @@ func TestLookupSafeURL(t *testing.T) {
 	if r.CheckedAt.IsZero() {
 		t.Error("expected CheckedAt to be set")
 	}
+	if r.Degraded {
+		t.Error("expected degraded=false")
+	}
 }
 
 func TestLookupMalware(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "evil.com/malware", Category: lookup.ThreatMalware},
-	})
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("evil.com/malware", `{"threat_category":"malware"}`)
 
 	r := svc.Lookup(context.Background(), "evil.com/malware")
 	if r.Safe {
@@ -44,10 +60,10 @@ func TestLookupMalware(t *testing.T) {
 }
 
 func TestLookupPhishing(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "phish.com/login", Category: lookup.ThreatPhishing},
-	})
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("phish.com/login", `{"threat_category":"phishing"}`)
 
 	r := svc.Lookup(context.Background(), "phish.com/login")
 	if r.Safe {
@@ -59,10 +75,10 @@ func TestLookupPhishing(t *testing.T) {
 }
 
 func TestLookupSpam(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "spam.example.com/pills", Category: lookup.ThreatSpam},
-	})
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("spam.example.com/pills", `{"threat_category":"spam"}`)
 
 	r := svc.Lookup(context.Background(), "spam.example.com/pills")
 	if r.Safe {
@@ -74,10 +90,10 @@ func TestLookupSpam(t *testing.T) {
 }
 
 func TestLookupUnlistedAfterOtherURLsAdded(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "evil.com/malware", Category: lookup.ThreatMalware},
-	})
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	mr.Set("evil.com/malware", `{"threat_category":"malware"}`)
 
 	r := svc.Lookup(context.Background(), "safe.com/page")
 	if !r.Safe {
@@ -85,28 +101,38 @@ func TestLookupUnlistedAfterOtherURLsAdded(t *testing.T) {
 	}
 }
 
-func TestAddURLsOverwrite(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "url.com/path", Category: lookup.ThreatSpam},
-	})
-	svc.AddURLs([]lookup.URLEntry{
-		{URL: "url.com/path", Category: lookup.ThreatMalware},
-	})
+func TestAddURLs(t *testing.T) {
+	svc, mr := newTestService(t)
+	defer mr.Close()
 
-	r := svc.Lookup(context.Background(), "url.com/path")
-	if r.ThreatCategory != lookup.ThreatMalware {
-		t.Errorf("expected overwritten category malware, got %s", r.ThreatCategory)
+	entries := []lookup.URLEntry{
+		{URL: "new-evil.com/path", Category: lookup.ThreatSpam},
+	}
+	if err := svc.AddURLs(context.Background(), entries); err != nil {
+		t.Fatal(err)
+	}
+
+	r := svc.Lookup(context.Background(), "new-evil.com/path")
+	if r.Safe {
+		t.Error("expected URL to be blocked after AddURLs")
+	}
+	if r.ThreatCategory != lookup.ThreatSpam {
+		t.Errorf("expected spam, got %s", r.ThreatCategory)
 	}
 }
 
 func TestAddURLsBulk(t *testing.T) {
-	svc := lookup.New()
-	svc.AddURLs([]lookup.URLEntry{
+	svc, mr := newTestService(t)
+	defer mr.Close()
+
+	err := svc.AddURLs(context.Background(), []lookup.URLEntry{
 		{URL: "a.com/1", Category: lookup.ThreatMalware},
 		{URL: "b.com/2", Category: lookup.ThreatPhishing},
 		{URL: "c.com/3", Category: lookup.ThreatSpam},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		url  string
@@ -122,5 +148,18 @@ func TestAddURLsBulk(t *testing.T) {
 		if r.ThreatCategory != tc.want {
 			t.Errorf("url=%s: expected %s, got %s", tc.url, tc.want, r.ThreatCategory)
 		}
+	}
+}
+
+func TestDegradedMode(t *testing.T) {
+	svc, mr := newTestService(t)
+	mr.Close() // simulate Redis going down
+
+	r := svc.Lookup(context.Background(), "any.com/path")
+	if !r.Safe {
+		t.Error("expected fail-open (safe=true) when Redis is unreachable")
+	}
+	if !r.Degraded {
+		t.Error("expected degraded=true when Redis is unreachable")
 	}
 }

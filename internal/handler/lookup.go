@@ -12,6 +12,7 @@ type lookupResponse struct {
 	URL            string    `json:"url"`
 	Safe           bool      `json:"safe"`
 	ThreatCategory string    `json:"threat_category"`
+	Degraded       bool      `json:"degraded"`
 	CheckedAt      time.Time `json:"checked_at"`
 	Version        int       `json:"version"`
 }
@@ -43,6 +44,7 @@ func (h *Handler) LookupURL(c *gin.Context) {
 		URL:            result.URL,
 		Safe:           result.Safe,
 		ThreatCategory: string(result.ThreatCategory),
+		Degraded:       result.Degraded,
 		CheckedAt:      result.CheckedAt,
 		Version:        result.Version,
 	})
