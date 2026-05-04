@@ -53,6 +53,8 @@ func main() {
 	router.Use(gin.Recovery())
 
 	router.GET("/urlinfo/1/:hostname_port/*path", h.LookupURL)
+	router.POST("/admin/urls", h.AddURLs)
+	router.GET("/health", h.Health)
 
 	logger.Info("server listening", slog.String("addr", ":8080"))
 	if err := router.Run(":8080"); err != nil && err != http.ErrServerClosed {

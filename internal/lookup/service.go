@@ -24,8 +24,8 @@ type threatInfo struct {
 }
 
 type URLEntry struct {
-	URL      string
-	Category ThreatCategory
+	URL      string         `json:"url"`
+	Category ThreatCategory `json:"threat_category"`
 }
 
 type Result struct {
