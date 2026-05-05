@@ -36,7 +36,7 @@ func main() {
 			logger.Error("Redis never became ready, exiting", slog.String("addr", redisAddr), slog.String("error", err.Error()))
 			os.Exit(1)
 		} else {
-			logger.Info("waiting for Redis", slog.Int("attempt", i), slog.String("addr", redisAddr))
+			logger.Info("waiting for Redis", slog.Int("attempt", i), slog.String("addr", redisAddr), slog.String("error", err.Error()))
 			time.Sleep(time.Second)
 		}
 	}
