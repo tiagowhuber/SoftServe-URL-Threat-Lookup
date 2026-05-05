@@ -245,3 +245,35 @@ func TestAdminAddURLsInvalidJSON(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON, got %d", w.Code)
 	}
 }
+
+func TestAdminAddURLsEmptyURL(t *testing.T) {
+	r, mr := newTestRouter(t)
+	defer mr.Close()
+
+	w := doPost(r, "/admin/urls", `[{"url":"","threat_category":"malware"}]`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty url, got %d", w.Code)
+	}
+}
+
+func TestAdminAddURLsInvalidCategory(t *testing.T) {
+	r, mr := newTestRouter(t)
+	defer mr.Close()
+
+	w := doPost(r, "/admin/urls", `[{"url":"evil.com/path","threat_category":"unknown"}]`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid threat_category, got %d", w.Code)
+	}
+}
+
+func TestLookupURLTooLong(t *testing.T) {
+	r, mr := newTestRouter(t)
+	defer mr.Close()
+
+	// Construct a URL longer than 2048 characters.
+	long := strings.Repeat("a", 2049)
+	w := doGet(r, "/urlinfo/1/host.com/"+long)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized URL, got %d", w.Code)
+	}
+}

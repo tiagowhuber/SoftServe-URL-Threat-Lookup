@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -23,9 +24,31 @@ type threatInfo struct {
 	Category ThreatCategory `json:"threat_category"`
 }
 
+const MaxURLLength = 2048
+
+var validCategories = map[ThreatCategory]bool{
+	ThreatNone:     true,
+	ThreatMalware:  true,
+	ThreatPhishing: true,
+	ThreatSpam:     true,
+}
+
 type URLEntry struct {
 	URL      string         `json:"url"`
 	Category ThreatCategory `json:"threat_category"`
+}
+
+func (e URLEntry) Validate() error {
+	if e.URL == "" {
+		return errors.New("url is required")
+	}
+	if len(e.URL) > MaxURLLength {
+		return fmt.Errorf("url exceeds maximum length of %d", MaxURLLength)
+	}
+	if !validCategories[e.Category] {
+		return fmt.Errorf("invalid threat_category %q", e.Category)
+	}
+	return nil
 }
 
 type Result struct {

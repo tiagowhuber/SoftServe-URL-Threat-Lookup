@@ -1,6 +1,7 @@
 # URL Threat Lookup
 
 A URL safety lookup service built with Go (Gin), Redis, and an in-process LRU cache.
+Answers to design questions in Part 2 are at the bottom of this file.
 
 ## Startup
 
@@ -118,7 +119,6 @@ The following items were intentionally omitted to keep this a simple, testable p
 - **No Bloom filter**
 - **No request body size limit**
 - **No graceful shutdown**
-- **No input validation on blocklist entries**
 
 ---
 

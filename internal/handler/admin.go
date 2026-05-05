@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -20,6 +21,13 @@ func (h *Handler) AddURLs(c *gin.Context) {
 	if len(entries) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty entries list"})
 		return
+	}
+
+	for i, e := range entries {
+		if err := e.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("entry %d: %s", i, err)})
+			return
+		}
 	}
 
 	if err := h.svc.AddURLs(c.Request.Context(), entries); err != nil {

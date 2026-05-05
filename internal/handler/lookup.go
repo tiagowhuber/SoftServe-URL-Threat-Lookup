@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/metrics"
 )
 
@@ -34,6 +35,11 @@ func (h *Handler) LookupURL(c *gin.Context) {
 	}
 	if rawQuery := c.Request.URL.RawQuery; rawQuery != "" {
 		targetURL += "?" + rawQuery
+	}
+
+	if len(targetURL) > lookup.MaxURLLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url exceeds maximum length"})
+		return
 	}
 
 	result := h.svc.Lookup(c.Request.Context(), targetURL)
