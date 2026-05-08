@@ -152,7 +152,7 @@ flowchart TD
 ### The number of requests will exceed the capacity of a single system. How might you solve this, and how might this change if you have to distribute the workload to an additional region such as Europe?
 
 **Single region:** By separating Redis from the node and placing it in front of Cassandra, all durable state lives on disk — Redis acts as a hot cache, not the source of truth. Scaling out is a matter of running more replicas behind a load balancer (NGINX, HAProxy, AWS ALB, etc.). Each node runs an in-process LRU cache and Bloom filter; the Bloom filter short-circuits the vast majority of safe-URL lookups before they ever reach Redis, so Redis only sees traffic for URLs that are plausibly in the blocklist.
-
+**Note:** Cassandra is assumed to be deployed as a multi-node cluster with replication with Redis in front.
 ```mermaid
 flowchart LR
     User["User"] --> LB["Load Balancer"]
