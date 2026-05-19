@@ -30,6 +30,22 @@ var (
 		Name: "url_lookup_cache_misses_total",
 		Help: "Total LRU cache misses.",
 	})
+
+	WriteRequestsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "url_write_requests_total",
+		Help: "Total POST /admin/urls requests handled.",
+	})
+
+	WriteURLsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "url_write_urls_total",
+		Help: "Total individual URLs added to the blocklist.",
+	})
+
+	WriteDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "url_write_duration_seconds",
+		Help:    "End-to-end latency of POST /admin/urls in seconds.",
+		Buckets: []float64{0.001, 0.005, 0.010, 0.025, 0.050, 0.100, 0.250, 0.500, 1.0},
+	})
 )
 
 func Register() {
@@ -39,5 +55,8 @@ func Register() {
 		RequestDuration,
 		CacheHits,
 		CacheMisses,
+		WriteRequestsTotal,
+		WriteURLsTotal,
+		WriteDuration,
 	)
 }

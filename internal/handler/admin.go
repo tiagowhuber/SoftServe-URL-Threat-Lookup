@@ -4,13 +4,18 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/lookup"
+	"github.com/tiagowhuber/softserve-url-threat-lookup/internal/metrics"
 )
 
 // AddURLs handles POST /admin/urls.
 func (h *Handler) AddURLs(c *gin.Context) {
+	start := time.Now()
+	metrics.WriteRequestsTotal.Inc()
+
 	var entries []lookup.URLEntry
 	if err := c.ShouldBindJSON(&entries); err != nil {
 		h.logger.Error("invalid request body", slog.String("error", err.Error()))
@@ -36,6 +41,8 @@ func (h *Handler) AddURLs(c *gin.Context) {
 		return
 	}
 
+	metrics.WriteURLsTotal.Add(float64(len(entries)))
+	metrics.WriteDuration.Observe(time.Since(start).Seconds())
 	h.logger.Info("blocklist updated", slog.Int("added", len(entries)))
 	c.JSON(http.StatusOK, gin.H{"added": len(entries)})
 }
