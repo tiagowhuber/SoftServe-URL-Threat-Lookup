@@ -1,4 +1,4 @@
-.PHONY: build up down test seed stress stress-reads stress-writes stress-mixed install-k6 open-grafana open-prometheus
+.PHONY: build up down test seed stress stress-reads stress-writes stress-mixed install-k6 open-grafana open-prometheus scale drain-test
 
 build:
 	docker-compose build
@@ -15,7 +15,7 @@ test:
 # Re-seeds the running service via the admin API.
 # Requires the stack to be up (make up) and curl to be available.
 seed:
-	curl -s -X POST http://localhost:8080/admin/urls \
+	curl -s -X POST http://localhost:8081/admin/urls \
 		-H "Content-Type: application/json" \
 		-d @data/blocklist.json
 
@@ -25,7 +25,8 @@ install-k6:
 
 # Run k6 stress tests. Override base URL with: make stress-reads BASE_URL=http://host:8080
 K6_CHECK := @which k6 > /dev/null 2>&1 || { echo "k6 not found – run: make install-k6"; exit 1; }
-K6_URL   := $(if $(BASE_URL),--env BASE_URL=$(BASE_URL),)
+BASE_URL ?= http://localhost:8081
+K6_URL   := --env BASE_URL=$(BASE_URL)
 
 # Read-only: lookups only (warm LRU + cold Redis scenarios).
 stress-reads:
@@ -45,6 +46,26 @@ stress-mixed:
 
 # Alias: stress → mixed (backward compat).
 stress: stress-mixed
+
+# Scale the app service to REPLICAS containers.
+# --no-recreate preserves running containers (zero-downtime scale-up).
+# Scale-down sends SIGTERM to excess containers; stop_grace_period gives them 30s to drain.
+# Usage: make scale REPLICAS=4
+REPLICAS ?= 2
+scale:
+	docker compose up -d --scale app=$(REPLICAS) --no-recreate
+	docker compose exec nginx nginx -s reload
+
+# Drain test: k6 runs continuously while replicas are added and removed.
+# k6 error_rate should stay 0.00% throughout, proving zero-downtime scaling.
+drain-test:
+	@echo "Starting read stress in background while scaling up/down..."
+	k6 run --env BASE_URL=$(BASE_URL) stress/reads.js & \
+	K6_PID=$$!; \
+	sleep 15 && echo "→ scaling to 4" && docker compose up -d --scale app=4 --no-recreate && docker compose exec nginx nginx -s reload && \
+	sleep 25 && echo "→ scaling to 2" && docker compose up -d --scale app=2 --no-recreate && docker compose exec nginx nginx -s reload && \
+	sleep 25 && echo "→ scaling to 1" && docker compose up -d --scale app=1 --no-recreate && docker compose exec nginx nginx -s reload; \
+	wait $$K6_PID
 
 # Open Grafana dashboard in the default browser (stack must be up).
 open-grafana:

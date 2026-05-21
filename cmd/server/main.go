@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,11 +69,41 @@ func main() {
 	router.GET("/health", h.Health)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	logger.Info("server listening", slog.String("addr", ":8080"))
-	if err := router.Run(":8080"); err != nil && err != http.ErrServerClosed {
+	srv := &http.Server{
+		Addr:              ":8080",
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Info("server listening", slog.String("addr", srv.Addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+
+	select {
+	case sig := <-quit:
+		logger.Info("shutdown signal received", slog.String("signal", sig.String()))
+	case err := <-serverErr:
 		logger.Error("server error", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	logger.Info("draining in-flight requests (up to 30s)")
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("shutdown error", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	logger.Info("server stopped cleanly")
 }
 
 func loadSeedData(ctx context.Context, svc *lookup.Service, logger *slog.Logger) error {
